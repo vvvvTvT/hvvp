@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title"><i class="fas fa-chart-line"></i> HTTP 请求监控</h2>
+        <button class="btn" id="refresh-btn"><i class="fas fa-sync-alt"></i> 刷新数据</button>
+    </div>
+
+    <div class="response-grid" id="requests-container">
+        <!-- 请求卡片通过JS动态生成 -->
+    </div>
+</div>
+
+<!-- 模态弹窗 -->
+<div id="modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); overflow:auto; z-index:9999;">
+    <div style="background:#0a0a1a; margin:50px auto; padding:20px; max-width:800px; border-radius:10px; position:relative;">
+        <button id="modal-close" style="position:absolute; top:10px; right:10px; font-size:20px; background:none; border:none; color:#fff; cursor:pointer;">&times;</button>
+        <h3 id="modal-title" style="color: var(--primary);"></h3>
+        <div id="modal-content" style="max-height:400px; overflow:auto; font-family: monospace; white-space: pre-wrap;"></div>
+    </div>
+</div>
+
+<script>
+function createRequestCard(req) {
+    const isSuccess = req.last_status && req.last_status >= 200 && req.last_status < 300;
+    const statusClass = isSuccess ? 'status-success' : 'status-error';
+
+    return `
+    <div class="request-card" data-id="${req.id}">
+        <div class="status-dot ${statusClass}"></div>
+        <div class="request-header">
+            <div class="request-method method-${req.method.toLowerCase()}">${req.method}</div>
+            <div class="request-url" title="${req.url}">${req.url}</div>
+        </div>
+        <div class="request-body">
+            ${req.last_response ? escapeHtml(req.last_response) : '<i>无响应内容</i>'}
+        </div>
+    </div>`;
+}
+
+// 简单转义HTML防止XSS
+function escapeHtml(text) {
+    if (!text) return '';
+    return text.replace(/&/g, "&amp;")
+               .replace(/</g, "&lt;")
+               .replace(/>/g, "&gt;")
+               .replace(/"/g, "&quot;")
+               .replace(/'/g, "&#039;");
+}
+
+
+async function fetchRequests() {
+    const res = await fetch('/api/requests');
+    const data = await res.json();
+
+    // 错误请求优先
+    data.sort((a, b) => {
+        const aIsError = !(a.last_status >= 200 && a.last_status < 300);
+        const bIsError = !(b.last_status >= 200 && b.last_status < 300);
+
+        if (aIsError && !bIsError) return -1;
+        if (!aIsError && bIsError) return 1;
+        return 0;
+    });
+
+    const container = document.getElementById('requests-container');
+    container.innerHTML = data.map(createRequestCard).join('');
+
+    // 绑定点击事件弹窗显示历史响应
+    document.querySelectorAll('.request-card').forEach(card => {
+        card.addEventListener('click', async () => {
+            const id = card.getAttribute('data-id');
+            const modal = document.getElementById('modal');
+            const title = document.getElementById('modal-title');
+            const content = document.getElementById('modal-content');
+            title.textContent = `请求ID ${id} - 历史响应`;
+            content.textContent = '加载中...';
+            modal.style.display = 'block';
+
+            try {
+                const res = await fetch(`/api/results/${id}`);
+                const results = await res.json();
+                if(results.length === 0){
+                    content.textContent = '无历史响应数据';
+                    return;
+                }
+                content.textContent = '';
+                results.forEach(r => {
+                    content.textContent += `[${r.timestamp}] 状态码: ${r.status_code}\n响应内容:\n${r.response_body}\n\n----------------------\n\n`;
+                });
+            } catch (e) {
+                content.textContent = '加载失败: ' + e.message;
+            }
+        });
+    });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    fetchRequests();
+
+    document.getElementById('refresh-btn').addEventListener('click', () => {
+        fetchRequests();
+        alert('数据已刷新！');
+    });
+
+    document.getElementById('modal-close').addEventListener('click', () => {
+        document.getElementById('modal').style.display = 'none';
+    });
+});
+</script>
+{% endblock %}
